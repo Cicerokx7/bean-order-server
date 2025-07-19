@@ -1,5 +1,6 @@
 Flask==2.3.3
 requests==2.31.0
+firebase-admin==6.2.0
 # Optional dependencies for hardware control
 # RPi.GPIO==0.7.1  # Uncomment if using GPIO pins
 # pyserial==3.5     # Uncomment if using serial communication 

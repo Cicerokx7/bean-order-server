@@ -16,6 +16,15 @@ import threading
 import time
 from collections import defaultdict
 
+# Firebase Admin SDK for sending messages back to app
+try:
+    import firebase_admin
+    from firebase_admin import credentials, db
+    FIREBASE_AVAILABLE = True
+except ImportError:
+    FIREBASE_AVAILABLE = False
+    print("Firebase Admin SDK not available - Pi-to-App communication disabled")
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -27,6 +36,24 @@ API_KEY = os.environ.get('API_KEY', 'your-secure-api-key-here')
 
 # Get port from environment variable (Railway sets this)
 PORT = int(os.environ.get('PORT', 3000))
+
+# Initialize Firebase Admin SDK if available
+firebase_app = None
+if FIREBASE_AVAILABLE:
+    try:
+        # Use service account key from environment variable
+        service_account_info = os.environ.get('FIREBASE_SERVICE_ACCOUNT')
+        if service_account_info:
+            cred = credentials.Certificate(json.loads(service_account_info))
+            firebase_app = firebase_admin.initialize_app(cred, {
+                'databaseURL': os.environ.get('FIREBASE_DATABASE_URL')
+            })
+            logger.info("Firebase Admin SDK initialized successfully")
+        else:
+            logger.warning("FIREBASE_SERVICE_ACCOUNT not set - Pi-to-App communication disabled")
+    except Exception as e:
+        logger.error(f"Failed to initialize Firebase Admin SDK: {e}")
+        FIREBASE_AVAILABLE = False
 
 # Rate limiting
 request_counts = defaultdict(list)
@@ -65,6 +92,33 @@ def verify_firebase_ip(request):
     
     return True  # Allow all for now, but you can restrict to Firebase IPs
 
+def send_status_to_app(user_id, order_id, status, message):
+    """Send status update back to the app via Firebase"""
+    if not FIREBASE_AVAILABLE or not firebase_app:
+        logger.warning("Firebase not available - cannot send status to app")
+        return False
+    
+    try:
+        # Create status update
+        status_data = {
+            'orderId': order_id,
+            'status': status,
+            'message': message,
+            'timestamp': datetime.now().isoformat(),
+            'source': 'coffee-server'
+        }
+        
+        # Send to Firebase Realtime Database
+        ref = db.reference(f'order_status/{user_id}/{order_id}')
+        ref.set(status_data)
+        
+        logger.info(f"Status sent to app: {status} - {message}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to send status to app: {e}")
+        return False
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
@@ -72,7 +126,8 @@ def health_check():
         'service': 'Order Notification Server',
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
-        'environment': os.environ.get('RAILWAY_ENVIRONMENT', 'development')
+        'environment': os.environ.get('RAILWAY_ENVIRONMENT', 'development'),
+        'firebase_available': FIREBASE_AVAILABLE
     })
 
 @app.route('/order-notification', methods=['POST'])
@@ -112,11 +167,17 @@ def order_notification():
         order_count = data.get('orderCount', 0)
         total_value = data.get('totalValue', 0)
         
+        # Generate order ID
+        order_id = f"order_{int(time.time())}"
+        
         # Log the order details
         logger.info(f"Order from user {user_id}: {order_count} items, total: ${total_value}")
         
+        # Send "preparing" status to app
+        send_status_to_app(user_id, order_id, "preparing", "Order received, starting preparation")
+        
         # Trigger coffee machine (placeholder function)
-        trigger_coffee_machine(orders)
+        trigger_coffee_machine(orders, user_id, order_id)
         
         # Send notification (placeholder function)
         send_notification(user_id, orders, total_value)
@@ -126,7 +187,8 @@ def order_notification():
             'status': 'success',
             'timestamp': datetime.now().isoformat(),
             'order_count': order_count,
-            'total_value': total_value
+            'total_value': total_value,
+            'order_id': order_id
         })
         
     except Exception as e:
@@ -161,27 +223,71 @@ def test_endpoint():
         data = request.get_json()
         logger.info(f"Test request received from {request.remote_addr}: {data}")
         
+        # Test sending a message back to app if Firebase is available
+        if FIREBASE_AVAILABLE and data and 'userId' in data:
+            send_status_to_app(data['userId'], 'test_order', 'test', 'Test message from Railway server')
+        
         return jsonify({
             'message': 'Raspberry Pi is online and responding',
             'status': 'success',
             'timestamp': datetime.now().isoformat(),
-            'received_data': data
+            'received_data': data,
+            'firebase_available': FIREBASE_AVAILABLE
         })
         
     except Exception as e:
         logger.error(f"Error in test endpoint: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
-def trigger_coffee_machine(orders):
+@app.route('/status/<user_id>/<order_id>', methods=['POST'])
+def update_order_status(user_id, order_id):
+    """Update order status (for manual updates or coffee machine integration)"""
+    # Verify API key
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return jsonify({'error': 'Missing or invalid authorization header'}), 401
+    
+    provided_key = auth_header.split(' ')[1]
+    if provided_key != API_KEY:
+        return jsonify({'error': 'Invalid API key'}), 401
+    
+    try:
+        data = request.get_json()
+        status = data.get('status', 'unknown')
+        message = data.get('message', 'Status updated')
+        
+        # Send status to app
+        success = send_status_to_app(user_id, order_id, status, message)
+        
+        return jsonify({
+            'success': success,
+            'message': f'Status updated to: {status}',
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error updating order status: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+def trigger_coffee_machine(orders, user_id, order_id):
     """Trigger the coffee machine to make the ordered drinks"""
     try:
         logger.info(f"Triggering coffee machine for {len(orders)} orders")
         
+        # Send "brewing" status to app
+        send_status_to_app(user_id, order_id, "brewing", "Coffee machine started")
+        
         # This is where you would integrate with your actual coffee machine
-        # For now, we'll just log the action
+        # For now, we'll just log the action and simulate brewing time
         
         for i, order in enumerate(orders):
             logger.info(f"Making drink {i+1}: {order.get('name', 'Unknown drink')}")
+            
+            # Simulate brewing time (remove this in production)
+            time.sleep(2)
+            
+            # Send progress update
+            send_status_to_app(user_id, order_id, "brewing", f"Making drink {i+1} of {len(orders)}")
             
             # Example: You could send commands to GPIO pins here
             # import RPi.GPIO as GPIO
@@ -191,10 +297,15 @@ def trigger_coffee_machine(orders):
             # time.sleep(5)
             # GPIO.output(18, GPIO.LOW)
         
+        # Send "ready" status to app
+        send_status_to_app(user_id, order_id, "ready", "Order completed and ready for pickup")
+        
         logger.info("Coffee machine trigger completed")
         
     except Exception as e:
         logger.error(f"Error triggering coffee machine: {str(e)}")
+        # Send error status to app
+        send_status_to_app(user_id, order_id, "error", f"Error: {str(e)}")
 
 def send_notification(user_id, orders, total_value):
     """Send notification about the order"""
@@ -215,6 +326,7 @@ if __name__ == '__main__':
     logger.info(f"Starting Order Notification Server on port {PORT}")
     logger.info(f"API Key configured: {'Yes' if API_KEY != 'your-secure-api-key-here' else 'No'}")
     logger.info(f"Rate limiting: {MAX_REQUESTS_PER_MINUTE} requests per minute per IP")
+    logger.info(f"Firebase Admin SDK: {'Available' if FIREBASE_AVAILABLE else 'Not available'}")
     
     # Run the Flask app
     app.run(host='0.0.0.0', port=PORT, debug=False) 
