@@ -1,0 +1,17 @@
+[Unit]
+Description=Coffee Order Notification Server
+After=network.target
+
+[Service]
+Type=simple
+User=carousel
+Group=carousel
+WorkingDirectory=/home/carousel/order-server
+ExecStart=/home/carousel/order-server/venv/bin/python /home/carousel/order-server/order_server.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target 
