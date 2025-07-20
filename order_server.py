@@ -163,12 +163,10 @@ def order_notification():
         
         # Extract order information
         user_id = data.get('userId', 'unknown')
+        order_id = data.get('orderId', f"order_{int(time.time())}")
         orders = data.get('orders', [])
         order_count = data.get('orderCount', 0)
         total_value = data.get('totalValue', 0)
-        
-        # Generate order ID
-        order_id = f"order_{int(time.time())}"
         
         # Log the order details
         logger.info(f"Order from user {user_id}: {order_count} items, total: ${total_value}")
