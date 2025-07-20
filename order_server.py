@@ -195,6 +195,65 @@ def order_notification():
         logger.error(f"Error processing order notification: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
+@app.route('/submit-number', methods=['POST'])
+def submit_number():
+    """Handle order number submission from app"""
+    # Rate limiting
+    if is_rate_limited(request.remote_addr):
+        logger.warning(f"Rate limited number submission from {request.remote_addr}")
+        return jsonify({'error': 'Rate limit exceeded'}), 429
+    
+    # Verify API key
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        logger.warning(f"Invalid auth header in number submission from {request.remote_addr}")
+        return jsonify({'error': 'Missing or invalid authorization header'}), 401
+    
+    provided_key = auth_header.split(' ')[1]
+    if provided_key != API_KEY:
+        logger.warning(f"Invalid API key in number submission from {request.remote_addr}")
+        return jsonify({'error': 'Invalid API key'}), 401
+    
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No JSON data provided'}), 400
+        
+        logger.info(f"Number submission received from {request.remote_addr}: {data}")
+        
+        # Extract data
+        user_id = data.get('userId', 'unknown')
+        order_id = data.get('orderId', 'unknown')
+        number = data.get('number', 'unknown')
+        
+        # Log the number submission
+        logger.info(f"Order number submitted by user {user_id} for order {order_id}: {number}")
+        
+        # Here you would typically:
+        # 1. Display the number on a screen
+        # 2. Print a receipt
+        # 3. Update the coffee machine status
+        # 4. Send confirmation back to app
+        
+        # For now, we'll just log it and send a confirmation
+        logger.info(f"Number {number} displayed for order {order_id}")
+        
+        # Send confirmation status to app
+        send_status_to_app(user_id, order_id, "completed", f"Order completed! Number {number} displayed.")
+        
+        return jsonify({
+            'message': 'Order number received and displayed',
+            'status': 'success',
+            'timestamp': datetime.now().isoformat(),
+            'order_id': order_id,
+            'number': number,
+            'user_id': user_id
+        })
+        
+    except Exception as e:
+        logger.error(f"Error processing number submission: {str(e)}")
+        return jsonify({'error': 'Internal server error'}), 500
+
 @app.route('/test', methods=['POST'])
 def test_endpoint():
     """Test endpoint for Firebase connection testing"""
