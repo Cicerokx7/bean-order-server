@@ -113,10 +113,13 @@ def send_status_to_app(user_id, order_id, status, message):
         ref.set(status_data)
         
         logger.info(f"Status sent to app: {status} - {message}")
+        logger.info(f"Database path: order_status/{user_id}/{order_id}")
+        logger.info(f"Status data: {status_data}")
         return True
         
     except Exception as e:
         logger.error(f"Failed to send status to app: {e}")
+        logger.error(f"Error details: {type(e).__name__}: {str(e)}")
         return False
 
 @app.route('/health', methods=['GET'])
